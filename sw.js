@@ -2,7 +2,7 @@
 // available offline. The model weights and the ONNX Runtime WASM binary are
 // cached separately by Transformers.js in the "transformers-cache" Cache.
 // Bump VERSION whenever index.html or the library version changes.
-const VERSION = "soph-v1";
+const VERSION = "soph-v2";
 const PRECACHE = ["./", "./index.html"];
 
 // Cross-origin hosts whose responses never change for a pinned URL.
