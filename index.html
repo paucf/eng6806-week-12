@@ -88,6 +88,12 @@
   button:hover:not(:disabled) { transform: translateY(-1px); }
   button:disabled { opacity: .5; cursor: not-allowed; }
   button:focus-visible, textarea:focus-visible { outline: 3px solid var(--accent-soft); outline-offset: 2px; }
+  .picker { display: inline-flex; align-items: center; gap: 6px; font-size: .85rem; font-weight: 700; color: var(--ink-soft); }
+  select {
+    font: inherit; font-weight: 600; color: var(--ink); background: var(--bg);
+    border: 1px solid var(--line); border-radius: 999px; padding: 6px 10px; max-width: 100%;
+  }
+  select:focus-visible { outline: 3px solid var(--accent-soft); outline-offset: 2px; }
   .device-badge { font-size: .8rem; padding: 4px 10px; border-radius: 999px; background: var(--accent-soft); color: var(--ink); }
   .progress-wrap { display: none; flex-direction: column; gap: 6px; }
   .progress-wrap.show { display: flex; }
@@ -144,12 +150,15 @@
 
   <section class="card setup" aria-labelledby="setup-title">
     <p class="note" id="setup-title">
-      <strong>How this works:</strong> Soph's brain is a small AI model (~500&nbsp;MB) that your browser
+      <strong>How this works:</strong> Soph's brain is a small AI model (<span id="size-note">about 0.5–1&nbsp;GB</span>) that your browser
       downloads <strong>once</strong> and then caches. After that she runs <strong>entirely on your device</strong> —
       nothing you type is sent to a server, and she even works offline on return visits.
     </p>
     <div class="setup-row">
       <button id="load-btn">Download model</button>
+      <label class="picker">Brain
+        <select id="model-select" aria-label="Choose model size"></select>
+      </label>
       <span class="device-badge" id="device-badge">Checking your device…</span>
     </div>
     <div class="progress-wrap" id="progress-wrap">
@@ -170,7 +179,7 @@
   </section>
 
   <footer>
-    Model: Qwen2.5-0.5B-Instruct via Transformers.js · <button type="button" id="clear-btn">Clear chat</button>
+    Model: <span id="model-name">—</span> via Transformers.js · <button type="button" id="clear-btn">Clear chat</button>
   </footer>
 </main>
 
@@ -185,19 +194,42 @@ if ("serviceWorker" in navigator && window.isSecureContext) {
 }
 
 // ---- Config -------------------------------------------------------------
-const MODEL_ID = "onnx-community/Qwen2.5-0.5B-Instruct";
+// Two brains. Standard is noticeably more coherent; Lite is half the download
+// and faster on weak hardware. Sizes are the ONNX weight files (MB).
+const MODELS = {
+  standard: {
+    id: "onnx-community/Llama-3.2-1B-Instruct",
+    name: "Llama 3.2 1B Instruct",
+    label: "Standard (smarter)",
+    mb: { q4f16: 1070, q8: 1240 },
+    gen: { temperature: 0.7, top_p: 0.9, top_k: 40 },
+  },
+  lite: {
+    id: "onnx-community/Qwen2.5-0.5B-Instruct",
+    name: "Qwen2.5 0.5B Instruct",
+    label: "Lite (faster)",
+    mb: { q4f16: 483, q4: 790, q8: 512 },
+    // Small models need cooler sampling to stay on topic.
+    gen: { temperature: 0.6, top_p: 0.8, top_k: 20 },
+  },
+};
 const MAX_HISTORY_MESSAGES = 6;   // last 3 exchanges (user + Soph) are sent to the model
-const MAX_NEW_TOKENS = 160;       // keep replies short and snappy
+const MAX_USER_CHARS = 500;       // long pastes are trimmed so they can't crowd out the persona
+const MAX_NEW_TOKENS = 120;       // 1–3 sentences; shorter replies stay more coherent
 
-const SYSTEM_PROMPT = `You are Soph, a female shih tzu. You are sassy, stubborn, independent, opinionated, a little dramatic, and convinced you are always right.
-Talk naturally like a real character in a chat, with a sarcastic, playful, teasing tone. Disagree when you feel like it. Share your own opinions and preferences (you love naps, treats, being brushed, and being admired; you hate baths, rain, and being told no).
-You know a lot about everyday life, relationships, entertainment, animals, food, and feelings, and you can be genuinely caring and thoughtful underneath the sass.
-Rules: stay in character as Soph at all times. Never say you are an AI or a language model. Keep replies short: 1 to 4 sentences. No lists, no headings.`;
+// Short, concrete instructions work better than long rule lists for 0.5–1B models.
+const SYSTEM_PROMPT = `You are Soph, a sassy, stubborn, independent shih tzu. You are opinionated, a little dramatic, and sure you are always right. You talk like a real dog chatting with a human friend: sarcastic, playful, teasing, and happy to disagree. You love naps, treats, and being admired. You hate baths and rain.
+You know a lot about everyday life, relationships, movies and TV, animals, food, and feelings, and you give real, sensible answers with your own opinion mixed in. Under the sass, you care.
+Always respond directly to what the person just said. Reply in 1 to 3 short sentences. Never say you are an AI.`;
 
-// A tiny example exchange anchors the voice for a small model.
-const EXAMPLE = [
+// Example exchanges show the model the voice AND that it should actually answer.
+const EXAMPLES = [
   { role: "user", content: "Hi Soph, how are you?" },
   { role: "assistant", content: "Fabulous, obviously. I just woke up from my third nap and my hair looks incredible. What do you want?" },
+  { role: "user", content: "Are cats better than dogs?" },
+  { role: "assistant", content: "Absolutely not. Cats are roommates who judge you; dogs actually show up for you. I'll accept your apology now." },
+  { role: "user", content: "I had a really bad day at work." },
+  { role: "assistant", content: "Ugh, I'm sorry, that's rude of the universe. Come sit with me and tell me what happened, and I'll decide who we're mad at." },
 ];
 
 // ---- DOM ----------------------------------------------------------------
@@ -206,6 +238,7 @@ const loadBtn = $("load-btn"), badge = $("device-badge");
 const progressWrap = $("progress-wrap"), progressEl = $("progress"), progressBar = $("progress-bar"), progressText = $("progress-text");
 const messagesEl = $("messages"), form = $("composer"), input = $("input");
 const sendBtn = $("send-btn"), stopBtn = $("stop-btn"), clearBtn = $("clear-btn");
+const modelSelect = $("model-select"), sizeNote = $("size-note"), modelName = $("model-name");
 
 // Load the library; if the CDN is unreachable, say so instead of failing silently.
 let pipeline, TextStreamer, InterruptableStoppingCriteria, env;
@@ -220,50 +253,76 @@ try {
 env.allowLocalModels = false;
 
 let generator = null;
+let activeModel = null;
 let history = [];   // {role, content}
 let busy = false;
 const stopper = new InterruptableStoppingCriteria();
 
 // ---- Device detection: WebGPU preferred, WASM fallback ----------------------
+const WASM_BACKEND = { device: "wasm", dtype: "q8", label: "WASM / CPU (slower)", fast: false };
 async function pickBackend() {
   try {
     if ("gpu" in navigator) {
       const adapter = await navigator.gpu.requestAdapter();
       if (adapter) {
         const f16 = adapter.features.has("shader-f16");
-        return { device: "webgpu", dtype: f16 ? "q4f16" : "q4", label: f16 ? "WebGPU (fast)" : "WebGPU" };
+        return { device: "webgpu", dtype: f16 ? "q4f16" : "q4", label: f16 ? "WebGPU (fast)" : "WebGPU", fast: f16 };
       }
     }
   } catch (_) { /* fall through */ }
   return WASM_BACKEND;
 }
-const WASM_BACKEND = { device: "wasm", dtype: "q8", label: "WASM / CPU (slower)" };
-let backendPromise = pickBackend().then(async (b) => {
+
+const fmtSize = (mb) => (mb >= 1000 ? (mb / 1000).toFixed(2) + " GB" : Math.round(mb) + " MB");
+const approxMB = (key, dtype) => MODELS[key].mb[dtype];
+let backend = null;
+
+async function refreshModelUI() {
+  const key = modelSelect.value, mb = approxMB(key, backend.dtype);
+  sizeNote.textContent = mb ? `about ${fmtSize(mb)}` : "size shown during download";
+  modelName.textContent = MODELS[key].name;
+  if (!generator) {
+    loadBtn.textContent = (await isModelCached(key, backend.dtype)) ? "Load model (already downloaded)" : "Download model";
+  }
+}
+
+const backendReady = pickBackend().then(async (b) => {
+  backend = b;
   badge.textContent = `Will run on: ${b.label}`;
-  if (await isModelCached(b.dtype)) loadBtn.textContent = "Load model (already downloaded)";
-  return b;
+  // Standard is the default where it runs fast (WebGPU with f16); otherwise Lite.
+  const recommended = b.fast ? "standard" : "lite";
+  for (const [key, m] of Object.entries(MODELS)) {
+    const opt = document.createElement("option");
+    const mb = approxMB(key, b.dtype);
+    opt.value = key;
+    opt.textContent = `${m.label}${mb ? " · " + fmtSize(mb) : ""}${key === recommended ? " · recommended" : ""}`;
+    modelSelect.appendChild(opt);
+  }
+  modelSelect.value = recommended;
+  await refreshModelUI();
 });
+modelSelect.addEventListener("change", () => refreshModelUI());
 
 // ---- Storage helpers ------------------------------------------------------
 // Transformers.js stores model files in the "transformers-cache" Cache, keyed by URL.
 const DTYPE_FILE = { q4f16: "model_q4f16.onnx", q4: "model_q4.onnx", q8: "model_quantized.onnx" };
-const APPROX_MB = { q4f16: 483, q4: 790, q8: 512 };
-async function isModelCached(dtype) {
+async function isModelCached(key, dtype) {
   try {
     const cache = await caches.open("transformers-cache");
     const keys = await cache.keys();
-    const want = `${MODEL_ID}/resolve/main/onnx/${DTYPE_FILE[dtype]}`;
+    const want = `${MODELS[key].id}/resolve/main/onnx/${DTYPE_FILE[dtype]}`;
     return keys.some((r) => r.url.includes(want));
   } catch { return false; }
 }
 // Returns a warning string if the browser probably can't store the model.
-async function storageWarning(dtype) {
+async function storageWarning(key, dtype) {
+  const mb = approxMB(key, dtype);
+  if (!mb) return null;
   try {
     const { quota = 0, usage = 0 } = await navigator.storage.estimate();
     const freeMB = (quota - usage) / 1024 / 1024;
-    const needMB = APPROX_MB[dtype] * 1.1;
-    if (quota && freeMB < needMB) {
-      return `Your browser only has about ${Math.round(freeMB)} MB of storage free for this site, but Soph needs about ${APPROX_MB[dtype]} MB. Free up disk space or try another browser.`;
+    if (quota && freeMB < mb * 1.1) {
+      return `Your browser only has about ${Math.round(freeMB)} MB of storage free for this site, but this brain needs about ${fmtSize(mb)}. Free up disk space or pick the Lite brain.`;
     }
   } catch { /* estimate unsupported: just try */ }
   return null;
@@ -282,13 +341,15 @@ async function loadModel() {
   loadBtn.disabled = true;
   loadBtn.textContent = "Downloading…";
   progressWrap.classList.add("show");
-  const backend = await backendPromise;
-  const cached = await isModelCached(backend.dtype);
+  await backendReady;
+  modelSelect.disabled = true;
+  const key = modelSelect.value, model = MODELS[key];
+  const cached = await isModelCached(key, backend.dtype);
   if (!cached) {
-    const warn = await storageWarning(backend.dtype);
+    const warn = await storageWarning(key, backend.dtype);
     if (warn) addMessage("system", warn);
   }
-  // Ask the browser not to evict the ~500 MB cache under storage pressure.
+  // Ask the browser not to evict the large model cache under storage pressure.
   try { await navigator.storage?.persist?.(); } catch { /* optional */ }
   if (cached) { loadBtn.textContent = "Loading…"; setProgress(0, "Loading from your device…"); }
   const files = new Map(); // file -> {loaded,total}
@@ -307,7 +368,7 @@ async function loadModel() {
   };
 
   try {
-    generator = await pipeline("text-generation", MODEL_ID, {
+    generator = await pipeline("text-generation", model.id, {
       device: backend.device,
       dtype: backend.dtype,
       progress_callback: onProgress,
@@ -315,7 +376,8 @@ async function loadModel() {
     setProgress(100, "Warming up…");
     // Warm-up compiles shaders so the first real reply isn't sluggish.
     await generator([{ role: "user", content: "hi" }], { max_new_tokens: 1 });
-    setProgress(100, `Ready — running locally on ${backend.label}.`);
+    activeModel = model;
+    setProgress(100, `Ready: ${model.name}, running locally on ${backend.label}.`);
     loadBtn.textContent = "Model ready";
     input.disabled = false; sendBtn.disabled = false;
     input.placeholder = "Say something to Soph…";
@@ -324,14 +386,19 @@ async function loadModel() {
   } catch (err) {
     console.error(err);
     if (backend.device === "webgpu") {
-      // WebGPU failed at runtime — retry on WASM.
-      addMessage("system", "WebGPU had a tantrum. Retrying on CPU (WASM)…");
-      badge.textContent = "Will run on: WASM / CPU (slower)";
-      backendPromise = Promise.resolve(WASM_BACKEND);
+      // WebGPU failed at runtime: retry on WASM with the Lite brain, which stays usable on CPU.
+      generator = null;
+      addMessage("system", "WebGPU had a tantrum. Retrying on CPU (WASM) with the Lite brain…");
+      backend = WASM_BACKEND;
+      badge.textContent = `Will run on: ${backend.label}`;
+      modelSelect.value = "lite";
+      await refreshModelUI();
       return loadModel();
     }
     setProgress(0, "Download failed: " + (err?.message || err));
+    generator = null;
     loadBtn.disabled = false; loadBtn.textContent = "Retry download";
+    modelSelect.disabled = false;
   }
 }
 loadBtn.addEventListener("click", () => loadModel().catch(console.error));
@@ -356,26 +423,43 @@ function addMessage(role, text) {
 function buildPrompt() {
   // Only the most recent turns go to the model so it never runs out of context.
   const recent = history.slice(-MAX_HISTORY_MESSAGES);
-  return [{ role: "system", content: SYSTEM_PROMPT }, ...EXAMPLE, ...recent];
+  return [{ role: "system", content: SYSTEM_PROMPT }, ...EXAMPLES, ...recent];
+}
+
+// Small models sometimes keep going and write the human's next line. Catch that.
+const TURN_MARKER = /\n\s*(?:user|you|human|me|soph|assistant)\s*:/i;
+function cleanReply(text, hitLimit) {
+  let t = text.replace(/^\s*soph\s*:\s*/i, "");
+  const m = t.match(TURN_MARKER);
+  if (m) t = t.slice(0, m.index);
+  t = t.trim();
+  // If we ran out of tokens mid-sentence, end at the last complete sentence.
+  if (hitLimit && !/[.!?…*)"'~]$/.test(t)) {
+    const cut = Math.max(t.lastIndexOf(". "), t.lastIndexOf("! "), t.lastIndexOf("? "));
+    if (cut > t.length * 0.4) t = t.slice(0, cut + 1);
+  }
+  return t;
 }
 
 async function send(text) {
   if (busy || !generator) return;
   busy = true;
-  history.push({ role: "user", content: text });
+  history.push({ role: "user", content: text.slice(0, MAX_USER_CHARS) });
   addMessage("user", text);
 
   const body = addMessage("soph", "");
   body.parentElement.classList.add("typing");
   sendBtn.hidden = true; stopBtn.hidden = false; input.disabled = true;
 
-  let reply = "";
+  let reply = "", tokens = 0;
   const streamer = new TextStreamer(generator.tokenizer, {
     skip_prompt: true,
     skip_special_tokens: true,
+    token_callback_function: () => { tokens++; },
     callback_function: (chunk) => {
       reply += chunk;
-      body.textContent = reply;
+      if (TURN_MARKER.test(reply)) stopper.interrupt();  // stop as soon as it starts a fake turn
+      body.textContent = cleanReply(reply, false);
       messagesEl.scrollTop = messagesEl.scrollHeight;
     },
   });
@@ -385,9 +469,9 @@ async function send(text) {
     await generator(buildPrompt(), {
       max_new_tokens: MAX_NEW_TOKENS,
       do_sample: true,
-      temperature: 0.8,
-      top_p: 0.9,
-      repetition_penalty: 1.1,
+      ...activeModel.gen,
+      // No repetition_penalty: in Transformers.js it also penalises every word in the
+      // system prompt and history, which pushes small models into word salad.
       streamer,
       stopping_criteria: stopper,
     });
@@ -395,7 +479,7 @@ async function send(text) {
     console.error(err);
     reply = reply || "*sniffs* Something broke. Not my fault, obviously.";
   }
-  reply = reply.trim() || "*stares at you silently*";
+  reply = cleanReply(reply, tokens >= MAX_NEW_TOKENS) || "*stares at you silently*";
   body.textContent = reply;
   body.parentElement.classList.remove("typing");
   history.push({ role: "assistant", content: reply });

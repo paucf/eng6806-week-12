@@ -2,8 +2,10 @@
 
 **Chat with Soph**: a sassy shih tzu played by a small language model that runs entirely in the browser.
 
-- Model: [`onnx-community/Qwen2.5-0.5B-Instruct`](https://huggingface.co/onnx-community/Qwen2.5-0.5B-Instruct), run with [Transformers.js](https://github.com/huggingface/transformers.js) 4.3.2
-- Download: about 483 MB on WebGPU (q4f16), about 512 MB on the WASM/CPU fallback (q8). It's downloaded once and cached by the browser.
+- Two "brains", both run with [Transformers.js](https://github.com/huggingface/transformers.js) 4.3.2:
+  - **Standard:** [`onnx-community/Llama-3.2-1B-Instruct`](https://huggingface.co/onnx-community/Llama-3.2-1B-Instruct). About 1.07 GB on WebGPU (q4f16). This is the default on GPUs with f16 support and is noticeably more coherent.
+  - **Lite:** [`onnx-community/Qwen2.5-0.5B-Instruct`](https://huggingface.co/onnx-community/Qwen2.5-0.5B-Instruct). About 483 MB on WebGPU and 512 MB on WASM. This is the default on CPU-only devices and on older GPUs.
+- Visitors can switch between the two before downloading. Each model is downloaded once and cached by the browser.
 - Nothing is sent to a server. After the first visit, the page, the library and the model all load from the visitor's device, so it works offline too.
 
 ## Files
@@ -24,6 +26,14 @@
 All paths are relative, so the site works under the `/eng6806-week-12/` sub-path without any changes.
 
 When you change `index.html` or upgrade the library, bump `VERSION` in `sw.js` so returning visitors get the new files.
+
+## Reply quality settings
+
+- **No `repetition_penalty`.** Transformers.js applies it to every token in the context, including the system prompt, and that makes small models ramble into word salad.
+- **Per-model sampling:** Llama uses temperature 0.7, top-p 0.9 and top-k 40. Qwen uses temperature 0.6, top-p 0.8 and top-k 20.
+- **Short prompt with examples:** a short persona description plus three example exchanges that show the voice and show Soph actually answering.
+- **Bounded context:** only the last 3 exchanges are sent, user messages are capped at 500 characters, and replies at 120 tokens.
+- **Reply clean-up:** generation stops if the model starts writing the user's next line, and a reply cut off mid-sentence is trimmed back to the last complete sentence.
 
 ## Notes and limits
 
