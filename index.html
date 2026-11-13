@@ -5,6 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Chat with Soph</title>
 <meta name="description" content="Chat with Soph, a sassy shih tzu, powered by a small language model running entirely in your browser.">
+<meta name="theme-color" content="#e0457b">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Chat with Soph">
+<meta property="og:description" content="A sassy shih tzu, powered by a small AI model that runs entirely in your browser.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%90%B6%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="preconnect" href="https://huggingface.co" crossorigin>
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.2/dist/transformers.min.js" crossorigin>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600&family=Nunito:wght@400;600;700&display=swap" rel="stylesheet">
@@ -167,9 +175,14 @@
 </main>
 
 <script type="module">
-import {
-  pipeline, TextStreamer, InterruptableStoppingCriteria, env,
-} from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.2";
+// Pinned to an exact file so the URL never changes and caches stay valid.
+const LIB_URL = "https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.2/dist/transformers.min.js";
+
+// Register the service worker so the page and library also work offline.
+// Relative path keeps it scoped to the repo's GitHub Pages sub-path.
+if ("serviceWorker" in navigator && window.isSecureContext) {
+  navigator.serviceWorker.register("./sw.js").catch((e) => console.warn("SW registration failed", e));
+}
 
 // ---- Config -------------------------------------------------------------
 const MODEL_ID = "onnx-community/Qwen2.5-0.5B-Instruct";
@@ -187,14 +200,24 @@ const EXAMPLE = [
   { role: "assistant", content: "Fabulous, obviously. I just woke up from my third nap and my hair looks incredible. What do you want?" },
 ];
 
-env.allowLocalModels = false;
-
 // ---- DOM ----------------------------------------------------------------
 const $ = (id) => document.getElementById(id);
 const loadBtn = $("load-btn"), badge = $("device-badge");
 const progressWrap = $("progress-wrap"), progressEl = $("progress"), progressBar = $("progress-bar"), progressText = $("progress-text");
 const messagesEl = $("messages"), form = $("composer"), input = $("input");
 const sendBtn = $("send-btn"), stopBtn = $("stop-btn"), clearBtn = $("clear-btn");
+
+// Load the library; if the CDN is unreachable, say so instead of failing silently.
+let pipeline, TextStreamer, InterruptableStoppingCriteria, env;
+try {
+  ({ pipeline, TextStreamer, InterruptableStoppingCriteria, env } = await import(LIB_URL));
+} catch (err) {
+  console.error(err);
+  badge.textContent = "Couldn't load the AI library. Check your connection and reload.";
+  loadBtn.disabled = true;
+  throw err;
+}
+env.allowLocalModels = false;
 
 let generator = null;
 let history = [];   // {role, content}
@@ -215,7 +238,36 @@ async function pickBackend() {
   return WASM_BACKEND;
 }
 const WASM_BACKEND = { device: "wasm", dtype: "q8", label: "WASM / CPU (slower)" };
-let backendPromise = pickBackend().then((b) => { badge.textContent = `Will run on: ${b.label}`; return b; });
+let backendPromise = pickBackend().then(async (b) => {
+  badge.textContent = `Will run on: ${b.label}`;
+  if (await isModelCached(b.dtype)) loadBtn.textContent = "Load model (already downloaded)";
+  return b;
+});
+
+// ---- Storage helpers ------------------------------------------------------
+// Transformers.js stores model files in the "transformers-cache" Cache, keyed by URL.
+const DTYPE_FILE = { q4f16: "model_q4f16.onnx", q4: "model_q4.onnx", q8: "model_quantized.onnx" };
+const APPROX_MB = { q4f16: 483, q4: 790, q8: 512 };
+async function isModelCached(dtype) {
+  try {
+    const cache = await caches.open("transformers-cache");
+    const keys = await cache.keys();
+    const want = `${MODEL_ID}/resolve/main/onnx/${DTYPE_FILE[dtype]}`;
+    return keys.some((r) => r.url.includes(want));
+  } catch { return false; }
+}
+// Returns a warning string if the browser probably can't store the model.
+async function storageWarning(dtype) {
+  try {
+    const { quota = 0, usage = 0 } = await navigator.storage.estimate();
+    const freeMB = (quota - usage) / 1024 / 1024;
+    const needMB = APPROX_MB[dtype] * 1.1;
+    if (quota && freeMB < needMB) {
+      return `Your browser only has about ${Math.round(freeMB)} MB of storage free for this site, but Soph needs about ${APPROX_MB[dtype]} MB. Free up disk space or try another browser.`;
+    }
+  } catch { /* estimate unsupported: just try */ }
+  return null;
+}
 
 // ---- Download / load ------------------------------------------------------
 const fmtMB = (b) => (b / 1024 / 1024).toFixed(0) + " MB";
@@ -231,6 +283,14 @@ async function loadModel() {
   loadBtn.textContent = "Downloading…";
   progressWrap.classList.add("show");
   const backend = await backendPromise;
+  const cached = await isModelCached(backend.dtype);
+  if (!cached) {
+    const warn = await storageWarning(backend.dtype);
+    if (warn) addMessage("system", warn);
+  }
+  // Ask the browser not to evict the ~500 MB cache under storage pressure.
+  try { await navigator.storage?.persist?.(); } catch { /* optional */ }
+  if (cached) { loadBtn.textContent = "Loading…"; setProgress(0, "Loading from your device…"); }
   const files = new Map(); // file -> {loaded,total}
 
   const onProgress = (info) => {
