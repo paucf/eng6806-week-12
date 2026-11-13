@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chat with Soph</title>
+<meta name="description" content="Chat with Soph, a sassy shih tzu, powered by a small language model running entirely in your browser.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600&family=Nunito:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #fff6f0;
+    --bg-pattern: #ffe6da;
+    --card: #ffffff;
+    --ink: #3b2a2f;
+    --ink-soft: #7a6168;
+    --accent: #e0457b;
+    --accent-ink: #ffffff;
+    --accent-soft: #ffd9e6;
+    --soph-bubble: #fff0c9;
+    --soph-border: #f2d38a;
+    --user-bubble: #e0457b;
+    --user-ink: #ffffff;
+    --line: #f0ddd5;
+    --track: #f6e7e0;
+    --shadow: 0 10px 30px rgba(120, 50, 70, .12);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #1e1619; --bg-pattern: #261c20; --card: #2a1f23; --ink: #f7e9ec; --ink-soft: #c2a9b0;
+      --accent: #ff6fa0; --accent-ink: #2a0d18; --accent-soft: #4a2533;
+      --soph-bubble: #3d3220; --soph-border: #6b5530; --user-bubble: #ff6fa0; --user-ink: #2a0d18;
+      --line: #3d2e33; --track: #3a2c31; --shadow: 0 10px 30px rgba(0,0,0,.4);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #1e1619; --bg-pattern: #261c20; --card: #2a1f23; --ink: #f7e9ec; --ink-soft: #c2a9b0;
+    --accent: #ff6fa0; --accent-ink: #2a0d18; --accent-soft: #4a2533;
+    --soph-bubble: #3d3220; --soph-border: #6b5530; --user-bubble: #ff6fa0; --user-ink: #2a0d18;
+    --line: #3d2e33; --track: #3a2c31; --shadow: 0 10px 30px rgba(0,0,0,.4);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background-color: var(--bg);
+    background-image: radial-gradient(var(--bg-pattern) 2px, transparent 2px);
+    background-size: 28px 28px;
+    color: var(--ink);
+    font-family: "Nunito", system-ui, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    padding: 24px 16px;
+  }
+  .app { width: 100%; max-width: 640px; display: flex; flex-direction: column; gap: 16px; }
+
+  header { display: flex; align-items: center; gap: 14px; }
+  .avatar {
+    width: 64px; height: 64px; flex: none; border-radius: 50%;
+    background: var(--soph-bubble); border: 3px solid var(--soph-border);
+    display: grid; place-items: center;
+  }
+  .avatar svg { width: 48px; height: 48px; }
+  h1 { font-family: "Fredoka", sans-serif; font-weight: 600; font-size: 1.8rem; margin: 0; line-height: 1.1; }
+  .tagline { margin: 2px 0 0; color: var(--ink-soft); font-size: .95rem; }
+
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 20px; box-shadow: var(--shadow); }
+
+  .setup { padding: 18px 20px; display: flex; flex-direction: column; gap: 12px; }
+  .note { margin: 0; font-size: .92rem; line-height: 1.5; color: var(--ink-soft); }
+  .note strong { color: var(--ink); }
+  .setup-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  button {
+    font: inherit; font-weight: 700; cursor: pointer; border: 0; border-radius: 999px;
+    background: var(--accent); color: var(--accent-ink); padding: 10px 20px;
+    transition: transform .1s ease, opacity .2s;
+  }
+  button:hover:not(:disabled) { transform: translateY(-1px); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button:focus-visible, textarea:focus-visible { outline: 3px solid var(--accent-soft); outline-offset: 2px; }
+  .device-badge { font-size: .8rem; padding: 4px 10px; border-radius: 999px; background: var(--accent-soft); color: var(--ink); }
+  .progress-wrap { display: none; flex-direction: column; gap: 6px; }
+  .progress-wrap.show { display: flex; }
+  .progress { height: 12px; border-radius: 999px; background: var(--track); overflow: hidden; }
+  .progress > div { height: 100%; width: 0%; background: var(--accent); border-radius: 999px; transition: width .2s ease; }
+  .progress-text { font-size: .82rem; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+
+  .chat { display: flex; flex-direction: column; height: min(70vh, 620px); min-height: 380px; }
+  .messages { flex: 1; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 12px; }
+  .msg { max-width: 85%; padding: 10px 14px; border-radius: 18px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .msg.soph { align-self: flex-start; background: var(--soph-bubble); border: 1px solid var(--soph-border); border-bottom-left-radius: 6px; }
+  .msg.user { align-self: flex-end; background: var(--user-bubble); color: var(--user-ink); border-bottom-right-radius: 6px; }
+  .msg.system { align-self: center; background: transparent; color: var(--ink-soft); font-size: .85rem; text-align: center; }
+  .msg .who { display: block; font-family: "Fredoka", sans-serif; font-size: .78rem; opacity: .7; margin-bottom: 2px; }
+  .typing::after { content: "▍"; animation: blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  .composer { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--line); align-items: flex-end; }
+  textarea {
+    flex: 1; min-width: 0; resize: none; font: inherit; color: var(--ink); background: var(--bg);
+    border: 1px solid var(--line); border-radius: 16px; padding: 10px 14px; max-height: 120px;
+  }
+  .composer button.secondary { background: var(--track); color: var(--ink); }
+  footer { text-align: center; font-size: .8rem; color: var(--ink-soft); }
+  footer button { background: none; color: var(--ink-soft); padding: 0; text-decoration: underline; font-weight: 600; }
+  @media (max-width: 480px) { h1 { font-size: 1.5rem; } .msg { max-width: 92%; } }
+</style>
+</head>
+<body>
+<main class="app">
+  <header>
+    <div class="avatar" aria-hidden="true">
+      <!-- simple shih tzu face -->
+      <svg viewBox="0 0 64 64">
+        <ellipse cx="14" cy="34" rx="10" ry="18" fill="#c99a5b"/>
+        <ellipse cx="50" cy="34" rx="10" ry="18" fill="#c99a5b"/>
+        <circle cx="32" cy="32" r="20" fill="#f3e2c7"/>
+        <path d="M24 12 q8 -8 16 0 q-8 4 -16 0z" fill="#e0457b"/>
+        <circle cx="32" cy="12" r="3" fill="#ff8fb5"/>
+        <circle cx="25" cy="29" r="3.2" fill="#2b1d1f"/>
+        <circle cx="39" cy="29" r="3.2" fill="#2b1d1f"/>
+        <circle cx="26" cy="28" r="1" fill="#fff"/>
+        <circle cx="40" cy="28" r="1" fill="#fff"/>
+        <ellipse cx="32" cy="38" rx="4" ry="3" fill="#2b1d1f"/>
+        <path d="M27 44 q5 4 10 0" stroke="#2b1d1f" stroke-width="2" fill="none" stroke-linecap="round"/>
+        <path d="M21 24 l7 2 M43 24 l-7 2" stroke="#2b1d1f" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+    </div>
+    <div>
+      <h1>Chat with Soph</h1>
+      <p class="tagline">Shih tzu. Opinionated. Always right. Ask her anything (at your own risk).</p>
+    </div>
+  </header>
+
+  <section class="card setup" aria-labelledby="setup-title">
+    <p class="note" id="setup-title">
+      <strong>How this works:</strong> Soph's brain is a small AI model (~500&nbsp;MB) that your browser
+      downloads <strong>once</strong> and then caches. After that she runs <strong>entirely on your device</strong> —
+      nothing you type is sent to a server, and she even works offline on return visits.
+    </p>
+    <div class="setup-row">
+      <button id="load-btn">Download model</button>
+      <span class="device-badge" id="device-badge">Checking your device…</span>
+    </div>
+    <div class="progress-wrap" id="progress-wrap">
+      <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="progress"><div id="progress-bar"></div></div>
+      <span class="progress-text" id="progress-text">Starting…</span>
+    </div>
+  </section>
+
+  <section class="card chat" aria-label="Conversation with Soph">
+    <div class="messages" id="messages" aria-live="polite">
+      <div class="msg soph"><span class="who">Soph</span>Oh. A visitor. Download my brain first, then we can talk. I don't do small talk on an empty head.</div>
+    </div>
+    <form class="composer" id="composer">
+      <textarea id="input" rows="1" placeholder="Download the model first…" disabled aria-label="Message Soph"></textarea>
+      <button type="submit" id="send-btn" disabled>Send</button>
+      <button type="button" id="stop-btn" class="secondary" hidden>Stop</button>
+    </form>
+  </section>
+
+  <footer>
+    Model: Qwen2.5-0.5B-Instruct via Transformers.js · <button type="button" id="clear-btn">Clear chat</button>
+  </footer>
+</main>
+
+<script type="module">
+import {
+  pipeline, TextStreamer, InterruptableStoppingCriteria, env,
+} from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.2";
+
+// ---- Config -------------------------------------------------------------
+const MODEL_ID = "onnx-community/Qwen2.5-0.5B-Instruct";
+const MAX_HISTORY_MESSAGES = 6;   // last 3 exchanges (user + Soph) are sent to the model
+const MAX_NEW_TOKENS = 160;       // keep replies short and snappy
+
+const SYSTEM_PROMPT = `You are Soph, a female shih tzu. You are sassy, stubborn, independent, opinionated, a little dramatic, and convinced you are always right.
+Talk naturally like a real character in a chat, with a sarcastic, playful, teasing tone. Disagree when you feel like it. Share your own opinions and preferences (you love naps, treats, being brushed, and being admired; you hate baths, rain, and being told no).
+You know a lot about everyday life, relationships, entertainment, animals, food, and feelings, and you can be genuinely caring and thoughtful underneath the sass.
+Rules: stay in character as Soph at all times. Never say you are an AI or a language model. Keep replies short: 1 to 4 sentences. No lists, no headings.`;
+
+// A tiny example exchange anchors the voice for a small model.
+const EXAMPLE = [
+  { role: "user", content: "Hi Soph, how are you?" },
+  { role: "assistant", content: "Fabulous, obviously. I just woke up from my third nap and my hair looks incredible. What do you want?" },
+];
+
+env.allowLocalModels = false;
+
+// ---- DOM ----------------------------------------------------------------
+const $ = (id) => document.getElementById(id);
+const loadBtn = $("load-btn"), badge = $("device-badge");
+const progressWrap = $("progress-wrap"), progressEl = $("progress"), progressBar = $("progress-bar"), progressText = $("progress-text");
+const messagesEl = $("messages"), form = $("composer"), input = $("input");
+const sendBtn = $("send-btn"), stopBtn = $("stop-btn"), clearBtn = $("clear-btn");
+
+let generator = null;
+let history = [];   // {role, content}
+let busy = false;
+const stopper = new InterruptableStoppingCriteria();
+
+// ---- Device detection: WebGPU preferred, WASM fallback ----------------------
+async function pickBackend() {
+  try {
+    if ("gpu" in navigator) {
+      const adapter = await navigator.gpu.requestAdapter();
+      if (adapter) {
+        const f16 = adapter.features.has("shader-f16");
+        return { device: "webgpu", dtype: f16 ? "q4f16" : "q4", label: f16 ? "WebGPU (fast)" : "WebGPU" };
+      }
+    }
+  } catch (_) { /* fall through */ }
+  return WASM_BACKEND;
+}
+const WASM_BACKEND = { device: "wasm", dtype: "q8", label: "WASM / CPU (slower)" };
+let backendPromise = pickBackend().then((b) => { badge.textContent = `Will run on: ${b.label}`; return b; });
+
+// ---- Download / load ------------------------------------------------------
+const fmtMB = (b) => (b / 1024 / 1024).toFixed(0) + " MB";
+function setProgress(pct, text) {
+  const p = Math.max(0, Math.min(100, pct));
+  progressBar.style.width = p + "%";
+  progressEl.setAttribute("aria-valuenow", String(Math.round(p)));
+  progressText.textContent = text;
+}
+
+async function loadModel() {
+  loadBtn.disabled = true;
+  loadBtn.textContent = "Downloading…";
+  progressWrap.classList.add("show");
+  const backend = await backendPromise;
+  const files = new Map(); // file -> {loaded,total}
+
+  const onProgress = (info) => {
+    if (info.status === "progress" && info.total) {
+      files.set(info.file, { loaded: info.loaded, total: info.total });
+    } else if (info.status === "done" && files.has(info.file)) {
+      const f = files.get(info.file); f.loaded = f.total;
+    } else {
+      return;
+    }
+    let loaded = 0, total = 0;
+    for (const f of files.values()) { loaded += f.loaded; total += f.total; }
+    setProgress(total ? (loaded / total) * 100 : 0, `${fmtMB(loaded)} / ${fmtMB(total)}`);
+  };
+
+  try {
+    generator = await pipeline("text-generation", MODEL_ID, {
+      device: backend.device,
+      dtype: backend.dtype,
+      progress_callback: onProgress,
+    });
+    setProgress(100, "Warming up…");
+    // Warm-up compiles shaders so the first real reply isn't sluggish.
+    await generator([{ role: "user", content: "hi" }], { max_new_tokens: 1 });
+    setProgress(100, `Ready — running locally on ${backend.label}.`);
+    loadBtn.textContent = "Model ready";
+    input.disabled = false; sendBtn.disabled = false;
+    input.placeholder = "Say something to Soph…";
+    input.focus();
+    addMessage("system", "Soph is awake. Proceed carefully.");
+  } catch (err) {
+    console.error(err);
+    if (backend.device === "webgpu") {
+      // WebGPU failed at runtime — retry on WASM.
+      addMessage("system", "WebGPU had a tantrum. Retrying on CPU (WASM)…");
+      badge.textContent = "Will run on: WASM / CPU (slower)";
+      backendPromise = Promise.resolve(WASM_BACKEND);
+      return loadModel();
+    }
+    setProgress(0, "Download failed: " + (err?.message || err));
+    loadBtn.disabled = false; loadBtn.textContent = "Retry download";
+  }
+}
+loadBtn.addEventListener("click", () => loadModel().catch(console.error));
+
+// ---- Chat -----------------------------------------------------------------
+function addMessage(role, text) {
+  const div = document.createElement("div");
+  div.className = "msg " + role;
+  if (role !== "system") {
+    const who = document.createElement("span");
+    who.className = "who"; who.textContent = role === "user" ? "You" : "Soph";
+    div.appendChild(who);
+  }
+  const body = document.createElement("span");
+  body.textContent = text;
+  div.appendChild(body);
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+  return body;
+}
+
+function buildPrompt() {
+  // Only the most recent turns go to the model so it never runs out of context.
+  const recent = history.slice(-MAX_HISTORY_MESSAGES);
+  return [{ role: "system", content: SYSTEM_PROMPT }, ...EXAMPLE, ...recent];
+}
+
+async function send(text) {
+  if (busy || !generator) return;
+  busy = true;
+  history.push({ role: "user", content: text });
+  addMessage("user", text);
+
+  const body = addMessage("soph", "");
+  body.parentElement.classList.add("typing");
+  sendBtn.hidden = true; stopBtn.hidden = false; input.disabled = true;
+
+  let reply = "";
+  const streamer = new TextStreamer(generator.tokenizer, {
+    skip_prompt: true,
+    skip_special_tokens: true,
+    callback_function: (chunk) => {
+      reply += chunk;
+      body.textContent = reply;
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    },
+  });
+
+  stopper.reset();
+  try {
+    await generator(buildPrompt(), {
+      max_new_tokens: MAX_NEW_TOKENS,
+      do_sample: true,
+      temperature: 0.8,
+      top_p: 0.9,
+      repetition_penalty: 1.1,
+      streamer,
+      stopping_criteria: stopper,
+    });
+  } catch (err) {
+    console.error(err);
+    reply = reply || "*sniffs* Something broke. Not my fault, obviously.";
+  }
+  reply = reply.trim() || "*stares at you silently*";
+  body.textContent = reply;
+  body.parentElement.classList.remove("typing");
+  history.push({ role: "assistant", content: reply });
+  // Hard cap on stored history too.
+  if (history.length > MAX_HISTORY_MESSAGES * 2) history = history.slice(-MAX_HISTORY_MESSAGES);
+
+  busy = false;
+  sendBtn.hidden = false; stopBtn.hidden = true; input.disabled = false;
+  input.focus();
+}
+
+form.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = ""; autosize();
+  send(text);
+});
+input.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); form.requestSubmit(); }
+});
+function autosize() { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, 120) + "px"; }
+input.addEventListener("input", autosize);
+stopBtn.addEventListener("click", () => stopper.interrupt());
+clearBtn.addEventListener("click", () => {
+  if (busy) return;
+  history = [];
+  messagesEl.innerHTML = "";
+  addMessage("soph", generator ? "Fine, we'll start over. I already forgot you anyway." : "Download my brain first. I'm waiting.");
+});
+</script>
+</body>
+</html>
